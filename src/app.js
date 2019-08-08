@@ -16,9 +16,20 @@ let users = [
     Admin: true
   },
   {
+<<<<<<< HEAD
     id: 4,
     Name: 'Gary',
     Admin: true
+=======
+    'id': 4,
+    'Name': 'Gary',
+    'Admin': true
+  },
+  {
+    'id': 5,
+    'Name': 'Tim',
+    'Admin': true
+>>>>>>> 86af9e1ab792ef83dec7d6373a3792bd6178e40f
   }
 ];
 /**
