@@ -5,21 +5,21 @@ This is a sample template for api-gateway-test - Below is a brief explanation of
 ```bash
 .
 ├── README.MD                   <-- This instructions file
-├── event.json                  <-- API Gateway Proxy Integration event payload
-├── hello-world                 <-- Source code for a lambda function
+├── src                         <-- Source code for a lambda function
 │   └── app.js                  <-- Lambda function code
 │   └── package.json            <-- NodeJS dependencies and scripts
 │   └── tests                   <-- Unit tests
 │       └── unit
 │           └── test-handler.js
 ├── template.yaml               <-- SAM template
+├── swagger.yaml                <-- Swagger definition
+├── buildspec.yml               <-- Build file processed by pipeline
 ```
 
 ## Requirements
 
 * AWS CLI already configured with Administrator permission
 * [NodeJS 10.10+ installed](https://nodejs.org/en/download/releases/)
-
 * [Docker installed](https://www.docker.com/community-edition)
 
 ## Setup process
@@ -29,8 +29,9 @@ This is a sample template for api-gateway-test - Below is a brief explanation of
 **Invoking function locally using a local sample payload**
 
 ```bash
-sam local invoke HelloWorldFunction --event event.json
+sam local invoke GetUsersFunction --no-event
 ```
+ [Local invoke parameters](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-cli-command-reference-sam-local-invoke.html)
  
 **Invoking function locally through local API Gateway**
 
@@ -38,18 +39,48 @@ sam local invoke HelloWorldFunction --event event.json
 sam local start-api
 ```
 
-If the previous command ran successfully you should now be able to hit the following local endpoint to invoke your function `http://localhost:3000/hello`
+If the previous command ran successfully you should now be able to hit the following local endpoint to invoke your function `http://localhost:3000/users`
 
-**SAM CLI** is used to emulate both Lambda and API Gateway locally and uses our `template.yaml` to understand how to bootstrap this environment (runtime, where the source code is, etc.) - The following excerpt is what the CLI will read in order to initialize an API and its routes:
+**SAM CLI** is used to emulate both Lambda and API Gateway locally and uses our `template.yaml` to understand how to bootstrap this environment (runtime, where the source code is, etc.) - The following excerpt is what the CLI will read in order to initialize an API generate resources/methods from the swagger file.
 
 ```yaml
 ...
-Events:
-    HelloWorld:
-        Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
-        Properties:
-            Path: /hello
-            Method: get
+  ServerlessRestAPI:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: dev
+      EndpointConfiguration: REGIONAL
+      DefinitionBody:
+        'Fn::Transform':
+          Name: 'AWS::Include'
+          Parameters:
+            Location: './swagger.yaml'
+```
+
+The swagger file also contains where Lambda invocations will be called on each method/resource (GetUsersFunction maps to the function created in our template):
+
+```yaml
+...
+paths:
+  /users:
+    get:
+      description: Gets full list of users
+      produces:
+        - application/json
+      responses:
+        '200':
+          description: The request was successful.
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/User'
+      x-amazon-apigateway-integration:
+        uri: 
+            Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetUsersFunction.Arn}/invocations
+        passthroughBehavior: when_no_match
+        httpMethod: POST
+        type: aws_proxy
+        ...
 ```
 
 ## Packaging and deployment
@@ -58,11 +89,11 @@ AWS Lambda NodeJS runtime requires a flat folder with all dependencies including
 
 ```yaml
 ...
-    HelloWorldFunction:
-        Type: AWS::Serverless::Function
-        Properties:
-            CodeUri: hello-world/
-            ...
+    GetUsersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      ...
 ```
 
 Firstly, we need a `S3 bucket` where we can upload our Lambda functions packaged as ZIP before we deploy anything - If you don't have a S3 bucket to store code artifacts then this is a good time to create one:
@@ -70,44 +101,9 @@ Firstly, we need a `S3 bucket` where we can upload our Lambda functions packaged
 ```bash
 aws s3 mb s3://BUCKET_NAME
 ```
-
-Next, run the following command to package our Lambda function to S3:
-
-```bash
-sam package \
-    --output-template-file packaged.yaml \
-    --s3-bucket REPLACE_THIS_WITH_YOUR_S3_BUCKET_NAME
-```
-
-Next, the following command will create a Cloudformation Stack and deploy your SAM resources.
-
-```bash
-sam deploy \
-    --template-file packaged.yaml \
-    --stack-name api-gateway-test \
-    --capabilities CAPABILITY_IAM
-```
+As long as the pipeline has been built correctly using the Terraform a simple git commit and push to the correct repo/branch should trigger the code being built/deployed to the API Gateway.
 
 > **See [Serverless Application Model (SAM) HOWTO Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-quick-start.html) for more details in how to get started.**
-
-After deployment is complete you can run the following command to retrieve the API Gateway Endpoint URL:
-
-```bash
-aws cloudformation describe-stacks \
-    --stack-name api-gateway-test \
-    --query 'Stacks[].Outputs[?OutputKey==`HelloWorldApi`]' \
-    --output table
-``` 
-
-## Fetch, tail, and filter Lambda function logs
-
-To simplify troubleshooting, SAM CLI has a command called sam logs. sam logs lets you fetch logs generated by your Lambda function from the command line. In addition to printing the logs on the terminal, this command has several nifty features to help you quickly find the bug.
-
-`NOTE`: This command works for all AWS Lambda functions; not just the ones you deploy using SAM.
-
-```bash
-sam logs -n HelloWorldFunction --stack-name api-gateway-test --tail
-```
 
 You can find more information and examples about filtering Lambda function logs in the [SAM CLI Documentation](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-logging.html).
 
@@ -116,36 +112,16 @@ You can find more information and examples about filtering Lambda function logs 
 We use `mocha` for testing our code and it is already added in `package.json` under `scripts`, so that we can simply run the following command to run our tests:
 
 ```bash
-cd hello-world
+cd src
 npm install
 npm run test
 ```
 
 ## Cleanup
 
-In order to delete our Serverless Application recently deployed you can use the following AWS CLI Command:
+In order to delete our Serverless Application recently deployed you just need to delete the stack from cloud formation.
 
-```bash
-aws cloudformation delete-stack --stack-name api-gateway-test
-```
-
-## Bringing to the next level
-
-Here are a few things you can try to get more acquainted with building serverless applications using SAM:
-
-### Learn how SAM Build can help you with dependencies
-
-* Uncomment lines on `app.js`
-* Build the project with ``sam build --use-container``
-* Invoke with ``sam local invoke HelloWorldFunction --event event.json``
-* Update tests
-
-### Create an additional API resource
-
-* Create a catch all resource (e.g. /hello/{proxy+}) and return the name requested through this new path
-* Update tests
-
-### Step-through debugging
+## Step-through debugging
 
 * **[Enable step-through debugging docs for supported runtimes]((https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-using-debugging.html))**
 
@@ -155,8 +131,7 @@ Next, you can use AWS Serverless Application Repository to deploy ready to use A
 
 ## Building the project
 
-[AWS Lambda requires a flat folder](https://docs.aws.amazon.com/lambda/latest/dg/nodejs-create-deployment-pkg.html) with the application as well as its dependencies in a node_modules folder. When you make changes to your source code or dependency manifest,
-run the following command to build your project local testing and deployment:
+[AWS Lambda requires a flat folder](https://docs.aws.amazon.com/lambda/latest/dg/nodejs-create-deployment-pkg.html) with the application as well as its dependencies in a node_modules folder. When you make changes to your source code or dependency manifest, run the following command to build your project local testing and deployment:
 
 ```bash
 sam build
@@ -168,40 +143,3 @@ sam build --use-container
 ```
 
 By default, this command writes built artifacts to `.aws-sam/build` folder.
-
-## SAM and AWS CLI commands
-
-All commands used throughout this document
-
-```bash
-# Invoke function locally with event.json as an input
-sam local invoke HelloWorldFunction --event event.json
-
-# Run API Gateway locally
-sam local start-api
-
-# Create S3 bucket
-aws s3 mb s3://BUCKET_NAME
-
-# Package Lambda function defined locally and upload to S3 as an artifact
-sam package \
-    --output-template-file packaged.yaml \
-    --s3-bucket REPLACE_THIS_WITH_YOUR_S3_BUCKET_NAME
-
-# Deploy SAM template as a CloudFormation stack
-sam deploy \
-    --template-file packaged.yaml \
-    --stack-name api-gateway-test \
-    --capabilities CAPABILITY_IAM
-
-# Describe Output section of CloudFormation stack previously created
-aws cloudformation describe-stacks \
-    --stack-name api-gateway-test \
-    --query 'Stacks[].Outputs[?OutputKey==`HelloWorldApi`]' \
-    --output table
-
-# Tail Lambda function Logs using Logical name defined in SAM Template
-sam logs -n HelloWorldFunction --stack-name api-gateway-test --tail
-```
-
-**NOTE**: Alternatively this could be part of package.json scripts section.
