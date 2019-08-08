@@ -19,6 +19,11 @@ let users = [
     'id': 4,
     'Name': 'Gary',
     'Admin': true
+  },
+  {
+    'id': 5,
+    'Name': 'Tim',
+    'Admin': true
   }
 ];
 /**
